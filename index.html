@@ -28,7 +28,8 @@
   /* Reticle */
   #reticle {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    width: 72px; height: 72px; pointer-events: none;
+    width: 96px; height: 96px; pointer-events: none;
+    transition: top .12s ease-out, left .12s ease-out;
   }
   #reticle .ring {
     position: absolute; inset: 0; border: 2px solid rgba(255,255,255,0.9);
@@ -99,7 +100,7 @@
     </div>
     <div id="overlay">
       <h1>Color Matcher</h1>
-      <p>Point your camera at a color and read the code from the center dot. Tap to start — your browser will ask for camera access.</p>
+      <p>Point your camera at your colors, then tap any swatch on screen to read its code. Tap to start — your browser will ask for camera access.</p>
       <button id="startBtn">Start camera</button>
     </div>
   </div>
@@ -110,7 +111,7 @@
       <div class="code-row"><span class="code-label">Hex</span><span class="code-val hex" id="hex">—</span></div>
       <div class="code-row"><span class="code-label">RGB</span><span class="code-val" id="rgb">—</span></div>
     </div>
-    <div class="hint" id="hint">Center the dot on the color you want.</div>
+    <div class="hint" id="hint">Tap a swatch to read it. Lock to freeze.</div>
   </div>
 </div>
 
@@ -130,8 +131,21 @@ const copyBtn = document.getElementById('copyBtn');
 const flash = document.getElementById('flash');
 
 let stream = null, locked = false, raf = null, lastHex = '';
+// Sample point as a fraction of the frame (0..1). Starts centered.
+let px = 0.5, py = 0.5;
+// Rolling buffer of recent readings to smooth jitter.
+const SMOOTH = 8;
+let buf = [];
+
+const reticle = document.getElementById('reticle');
+const camWrap = document.getElementById('cam-wrap');
 
 function toHex(n) { return n.toString(16).padStart(2, '0').toUpperCase(); }
+
+function placeReticle() {
+  reticle.style.left = (px * 100) + '%';
+  reticle.style.top = (py * 100) + '%';
+}
 
 async function start() {
   try {
@@ -143,6 +157,7 @@ async function start() {
     await video.play();
     overlay.classList.add('hidden');
     controls.classList.remove('hidden');
+    placeReticle();
     loop();
   } catch (err) {
     overlay.querySelector('h1').textContent = 'Camera unavailable';
@@ -157,12 +172,20 @@ function sample() {
   if (!w || !h) return;
   if (frame.width !== w) { frame.width = w; frame.height = h; }
   ctx.drawImage(video, 0, 0, w, h);
-  // Average a small 9x9 block at the exact center to reduce noise.
-  const cx = Math.floor(w / 2), cy = Math.floor(h / 2), r = 4;
+  // Larger ~25x25 block, clamped to frame edges, centered on the chosen point.
+  const r = 12;
+  let cx = Math.round(px * w), cy = Math.round(py * h);
+  cx = Math.max(r, Math.min(w - r - 1, cx));
+  cy = Math.max(r, Math.min(h - r - 1, cy));
   const data = ctx.getImageData(cx - r, cy - r, r * 2 + 1, r * 2 + 1).data;
   let rs = 0, gs = 0, bs = 0, count = data.length / 4;
   for (let i = 0; i < data.length; i += 4) { rs += data[i]; gs += data[i+1]; bs += data[i+2]; }
-  const R = Math.round(rs / count), G = Math.round(gs / count), B = Math.round(bs / count);
+  // Push this frame's average into the rolling buffer, then average the buffer.
+  buf.push([rs / count, gs / count, bs / count]);
+  if (buf.length > SMOOTH) buf.shift();
+  let ar = 0, ag = 0, ab = 0;
+  for (const c of buf) { ar += c[0]; ag += c[1]; ab += c[2]; }
+  const R = Math.round(ar / buf.length), G = Math.round(ag / buf.length), B = Math.round(ab / buf.length);
   const hex = '#' + toHex(R) + toHex(G) + toHex(B);
   lastHex = hex;
   hexEl.textContent = hex;
@@ -175,13 +198,31 @@ function loop() {
   raf = requestAnimationFrame(loop);
 }
 
+// Tap anywhere on the camera to move the sample point there.
+camWrap.addEventListener('pointerdown', (e) => {
+  if (overlay && !overlay.classList.contains('hidden')) return; // ignore before start
+  const rect = camWrap.getBoundingClientRect();
+  const nx = (e.clientX - rect.left) / rect.width;
+  const ny = (e.clientY - rect.top) / rect.height;
+  if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+  px = nx; py = ny;
+  buf = [];                 // clear smoothing so the new spot reads immediately
+  placeReticle();
+  if (locked) {             // a tap while locked resumes live reading
+    locked = false;
+    lockBtn.textContent = 'Lock';
+    lockBtn.classList.remove('lock-on');
+    hintEl.textContent = 'Tap a swatch to read it. Lock to freeze.';
+  }
+});
+
 startBtn.addEventListener('click', start);
 
 lockBtn.addEventListener('click', () => {
   locked = !locked;
   lockBtn.textContent = locked ? 'Unlock' : 'Lock';
   lockBtn.classList.toggle('lock-on', locked);
-  hintEl.textContent = locked ? 'Reading frozen. Tap Unlock to resume.' : 'Center the dot on the color you want.';
+  hintEl.textContent = locked ? 'Reading frozen. Tap a swatch or Unlock to resume.' : 'Tap a swatch to read it. Lock to freeze.';
   if (locked) { flash.style.transition = 'none'; flash.style.opacity = '0.7';
     requestAnimationFrame(() => { flash.style.transition = 'opacity .35s'; flash.style.opacity = '0'; }); }
 });
