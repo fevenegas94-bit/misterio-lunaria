@@ -25,21 +25,23 @@
   video, canvas#frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   canvas#frame { visibility: hidden; }
 
-  /* Reticle */
+  /* Reticle — a square showing the area being averaged */
   #reticle {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    width: 96px; height: 96px; pointer-events: none;
+    width: 64px; height: 64px; pointer-events: none;
     transition: top .12s ease-out, left .12s ease-out;
   }
-  #reticle .ring {
-    position: absolute; inset: 0; border: 2px solid rgba(255,255,255,0.9);
-    border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,0.45), inset 0 0 0 2px rgba(0,0,0,0.45);
+  #reticle .box {
+    position: absolute; inset: 0; border: 2px solid rgba(255,255,255,0.95);
+    border-radius: 6px;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.45), inset 0 0 0 2px rgba(0,0,0,0.45);
   }
-  #reticle .dot {
-    position: absolute; top: 50%; left: 50%; width: 6px; height: 6px;
-    transform: translate(-50%,-50%); background: #fff; border-radius: 50%;
-    box-shadow: 0 0 0 1.5px rgba(0,0,0,0.6);
+  #reticle .crosshair-h, #reticle .crosshair-v {
+    position: absolute; background: rgba(255,255,255,0.9);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
   }
+  #reticle .crosshair-h { top: 50%; left: 50%; width: 10px; height: 2px; transform: translate(-50%,-50%); }
+  #reticle .crosshair-v { top: 50%; left: 50%; width: 2px; height: 10px; transform: translate(-50%,-50%); }
 
   /* Readout panel */
   #panel {
@@ -92,7 +94,7 @@
   <div id="cam-wrap">
     <video id="video" playsinline muted></video>
     <canvas id="frame"></canvas>
-    <div id="reticle"><div class="ring"></div><div class="dot"></div></div>
+    <div id="reticle"><div class="box"></div><div class="crosshair-h"></div><div class="crosshair-v"></div></div>
     <div id="flash"></div>
     <div id="controls" class="hidden">
       <button id="lockBtn">Lock</button>
@@ -172,8 +174,12 @@ function sample() {
   if (!w || !h) return;
   if (frame.width !== w) { frame.width = w; frame.height = h; }
   ctx.drawImage(video, 0, 0, w, h);
-  // Larger ~25x25 block, clamped to frame edges, centered on the chosen point.
-  const r = 12;
+  // Match the sampled square to the on-screen reticle box.
+  // Reticle is 64 CSS px; scale that into video-pixel space.
+  const rect = camWrap.getBoundingClientRect();
+  // object-fit: cover scales by the larger ratio, then crops the other axis.
+  const scale = Math.max(w / rect.width, h / rect.height);
+  const r = Math.max(8, Math.round((64 * scale) / 2));
   let cx = Math.round(px * w), cy = Math.round(py * h);
   cx = Math.max(r, Math.min(w - r - 1, cx));
   cy = Math.max(r, Math.min(h - r - 1, cy));
